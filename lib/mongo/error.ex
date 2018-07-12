@@ -24,3 +24,7 @@ defmodule Mongo.Error do
     %Mongo.Error{message: message}
   end
 end
+
+defmodule Mongo.WriteError do
+  defexception [:n, :ok, :write_errors]
+end
