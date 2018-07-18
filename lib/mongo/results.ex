@@ -51,11 +51,11 @@ defmodule Mongo.UpdateResult do
     * `:upserted_id` - If the operation was an upsert, the upserted id
   """
 
-  @type t :: %__MODULE__{
-    matched_count: non_neg_integer,
-    modified_count: non_neg_integer,
-    upserted_id: nil | BSON.ObjectId.t
-  }
+  # @type t :: %__MODULE__{
+  #   matched_count: non_neg_integer,
+  #   modified_count: non_neg_integer,
+  #   upserted_id: nil | BSON.ObjectId.t
+  # }
 
-  defstruct [:matched_count, :modified_count, :upserted_id]
+  defstruct [:matched_count, :modified_count, :acknowledged]
 end

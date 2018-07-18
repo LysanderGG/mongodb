@@ -513,11 +513,7 @@ defmodule Mongo do
     assert_single_doc!(doc)
     {[id], [doc]} = assign_ids([doc])
 
-    write_concern = %{
-      w: Keyword.get(opts, :w),
-      j: Keyword.get(opts, :j),
-      wtimeout: Keyword.get(opts, :wtimeout)
-    } |> filter_nils()
+    write_concern = write_concern(opts)
 
     query = [
       insert: coll,
@@ -530,8 +526,8 @@ defmodule Mongo do
     with {:ok, conn, _, _} <- select_server(topology_pid, :write, opts),
          {:ok, doc} <- direct_command(conn, query, opts) do
       case doc do
-        %{"writeErrors" => _} ->
-          {:error, %Mongo.WriteError{n: doc["n"], ok: doc["ok"], write_errors: doc["writeErrors"]}}
+        %{"writeErrors" => errors} ->
+          {:error, %Mongo.WriteError{n: doc["n"], ok: doc["ok"], write_errors: errors}}
         _ ->
           case Map.get(write_concern, :w) do
             0 ->
@@ -573,11 +569,7 @@ defmodule Mongo do
     assert_many_docs!(docs)
     {ids, docs} = assign_ids(docs)
 
-    write_concern = %{
-      w: Keyword.get(opts, :w),
-      j: Keyword.get(opts, :j),
-      wtimeout: Keyword.get(opts, :wtimeout)
-    } |> filter_nils()
+    write_concern = write_concern(opts)
 
     query = [
       insert: coll,
@@ -675,9 +667,11 @@ defmodule Mongo do
          {:ok, doc} <- get_last_error(reply) do
       case doc do
         %{"n" => 1, "upserted" => upserted_id} ->
-          {:ok, %Mongo.UpdateResult{matched_count: 0, modified_count: 1, upserted_id: upserted_id}}
+          nil
+          # {:ok, %Mongo.UpdateResult{matched_count: 0, modified_count: 1, upserted_id: upserted_id}}
         %{"n" => n} ->
-          {:ok, %Mongo.UpdateResult{matched_count: n, modified_count: n}}
+          nil
+          # {:ok, %Mongo.UpdateResult{matched_count: n, modified_count: n}}
       end
     end
   end
@@ -713,17 +707,28 @@ defmodule Mongo do
   def update_one(topology_pid, coll, filter, update, opts \\ []) do
     modifier_docs(update, :update)
 
-    params = [filter, update]
-    query = %Query{action: :update_one, extra: coll}
+    write_concern = write_concern(opts)
+
+    query = [
+      update: coll,
+      updates: [update(filter, update, false)],
+      ordered: Keyword.get(opts, :ordered),
+      writeConcern: write_concern,
+      bypassDocumentValidation: Keyword.get(opts, :bypass_document_validation)
+    ] |> filter_nils()
+
     with {:ok, conn, _, _} <- select_server(topology_pid, :write, opts),
-         {:ok, reply} <- DBConnection.execute(conn, query, params, defaults(opts)),
-         :ok <- maybe_failure(reply),
-         {:ok, doc} <- get_last_error(reply) do
+         {:ok, doc} <- direct_command(conn, query, opts) do
       case doc do
-        %{"n" => 1, "upserted" => upserted_id} ->
-          {:ok, %Mongo.UpdateResult{matched_count: 0, modified_count: 1, upserted_id: upserted_id}}
-        %{"n" => n} ->
-          {:ok, %Mongo.UpdateResult{matched_count: n, modified_count: n}}
+        %{"writeErrors" => errors} ->
+          {:error, %Mongo.WriteError{n: doc["n"], ok: doc["ok"], write_errors: errors}}
+        _ ->
+          case Map.get(write_concern, :w) do
+            0 ->
+              {:ok, %Mongo.UpdateResult{acknowledged: false, matched_count: doc["n"], modified_count: doc["nModified"]}}
+            _ ->
+              {:ok, %Mongo.UpdateResult{acknowledged: true, matched_count: doc["n"], modified_count: doc["nModified"]}}
+          end
       end
     end
   end
@@ -760,9 +765,11 @@ defmodule Mongo do
          {:ok, doc} <- get_last_error(reply) do
       case doc do
         %{"n" => 1, "upserted" => upserted_id} ->
-          {:ok, %Mongo.UpdateResult{matched_count: 0, modified_count: 1, upserted_id: upserted_id}}
+          nil
+          # {:ok, %Mongo.UpdateResult{matched_count: 0, modified_count: 1, upserted_id: upserted_id}}
         %{"n" => n} ->
-          {:ok, %Mongo.UpdateResult{matched_count: n, modified_count: n}}
+          nil
+          # {:ok, %Mongo.UpdateResult{matched_count: n, modified_count: n}}
       end
     end
   end
@@ -788,6 +795,18 @@ defmodule Mongo do
         end
       end
     end
+  end
+
+  defp update(filter, update, multi?) do
+    %{q: filter, u: update, multi: multi?}
+  end
+
+  defp write_concern(opts) do
+    %{
+      w: Keyword.get(opts, :w),
+      j: Keyword.get(opts, :j),
+      wtimeout: Keyword.get(opts, :wtimeout)
+    } |> filter_nils()
   end
 
   defp select_servers(topology_pid, type, opts) do
